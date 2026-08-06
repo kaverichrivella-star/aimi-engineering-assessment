@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+scikit-learn
+pyyaml
+requests
+pyinstaller
+joblib
+pytest
+python-dotenv
