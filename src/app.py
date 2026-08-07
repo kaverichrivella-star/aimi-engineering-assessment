@@ -28,16 +28,24 @@ SYMBOLS = [
 def get_provider(provider_name: str = 'Mock', cfg: dict | None = None):
     # Returns an object that matches the MockProvider interface used by the app
     cfg = cfg or {}
+    provider_name = provider_name or 'Mock'
+
     if provider_name.lower() == 'mock':
-        return MockProvider(SYMBOLS)
-    elif provider_name.lower() == 'fyers':
+        return MockProvider(SYMBOLS), None
+
+    if provider_name.lower() == 'fyers':
+        if not (cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN')):
+            return MockProvider(SYMBOLS), 'Fyers access token not configured. Running mock demo instead.'
         adapter = FyersAdapter(cfg)
-        return AdapterProvider(adapter, SYMBOLS)
-    elif provider_name.lower() in ('angel', 'angelone', 'angel_one'):
+        return AdapterProvider(adapter, SYMBOLS), None
+
+    if provider_name.lower() in ('angel', 'angelone', 'angel_one'):
+        if not (cfg.get('angel_api_key') or cfg.get('ANGEL_API_KEY')):
+            return MockProvider(SYMBOLS), 'Angel One API key not configured. Running mock demo instead.'
         adapter = AngelAdapter(cfg)
-        return AdapterProvider(adapter, SYMBOLS)
-    else:
-        return MockProvider(SYMBOLS)
+        return AdapterProvider(adapter, SYMBOLS), None
+
+    return MockProvider(SYMBOLS), None
 
 
 class AdapterProvider:
@@ -88,8 +96,11 @@ def main():
     st.title("AI/ML Stock Screener — Demo")
     cfg = load_config()
     provider_name = st.sidebar.selectbox("Provider", ["Mock", "Fyers", "Angel"], index=0)
-    provider = get_provider(provider_name, cfg)
+    provider, provider_warning = get_provider(provider_name, cfg)
     predictor = SignalPredictor()
+
+    if provider_warning:
+        st.warning(provider_warning)
 
     # Sidebar controls
     st.sidebar.header("Filters & Settings")
