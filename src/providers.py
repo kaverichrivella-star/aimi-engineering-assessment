@@ -67,7 +67,66 @@ class MockProvider(BaseProvider):
 
     def get_history(self, symbol, minutes):
         cutoff = datetime.utcnow() - timedelta(minutes=minutes)
-        return [ (t,p,q) for (t,p,q) in self.history[symbol] if t >= cutoff ]
+        return [(t, p, q) for (t, p, q) in self.history[symbol] if t >= cutoff]
+
+
+class YFinanceProvider(BaseProvider):
+    """Fallback live market provider using Yahoo Finance when broker endpoints are unavailable."""
+    def __init__(self, symbols):
+        self.raw_symbols = symbols
+        self.symbols = [s if s.endswith('.NS') else f'{s}.NS' for s in symbols]
+
+    def step(self):
+        time.sleep(0)
+
+    def get_symbols(self):
+        return self.raw_symbols
+
+    def _normalize_symbol(self, symbol):
+        return symbol if symbol.endswith('.NS') else f'{symbol}.NS'
+
+    def get_latest(self, symbol):
+        try:
+            import yfinance as yf
+            sym = self._normalize_symbol(symbol)
+            ticker = yf.Ticker(sym)
+            hist = ticker.history(period='1d', interval='1m')
+            if hist.empty:
+                hist = ticker.history(period='5d', interval='1d')
+            if hist.empty:
+                return {'symbol': symbol, 'ltp': None}
+            last_price = float(hist['Close'].iloc[-1])
+            return {'symbol': symbol, 'ltp': last_price}
+        except Exception:
+            return {'symbol': symbol, 'ltp': None}
+
+    def get_depth(self, symbol):
+        latest = self.get_latest(symbol)
+        p = latest.get('ltp') or 0.0
+        spread = max(0.01, p * 0.001)
+        return {
+            'bid_price': round(p - spread, 2),
+            'bid_qty': 1000000,
+            'ask_price': round(p + spread, 2),
+            'ask_qty': 1000000,
+        }
+
+    def get_history(self, symbol, minutes):
+        try:
+            import yfinance as yf
+            sym = self._normalize_symbol(symbol)
+            interval = '1m' if minutes <= 60 else '5m'
+            period = '2d' if minutes <= 60 else '7d'
+            hist = yf.Ticker(sym).history(period=period, interval=interval)
+            if hist.empty:
+                return []
+            out = []
+            for idx, row in hist.iterrows():
+                out.append((idx.to_pydatetime(), float(row['Close']), int(row.get('Volume', 0))))
+            cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+            return [(t, p, q) for (t, p, q) in out if t >= cutoff]
+        except Exception:
+            return []
 
 
 class FyersProvider(BaseProvider):

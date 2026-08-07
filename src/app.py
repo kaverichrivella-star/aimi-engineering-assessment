@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from providers import MockProvider
+from providers import MockProvider, YFinanceProvider
 from adapters.fyers_adapter import FyersAdapter
 from adapters.angel_adapter import AngelAdapter
 from config import load_config
@@ -40,6 +40,9 @@ def get_provider(provider_name: str = 'Mock', cfg: dict | None = None, symbols=N
 
     if provider_name.lower() == 'mock':
         return MockProvider(symbols), None
+
+    if provider_name.lower() == 'yahoo':
+        return YFinanceProvider(symbols), None
 
     if provider_name.lower() == 'fyers':
         adapter = FyersAdapter(cfg)
@@ -138,7 +141,22 @@ class TradeManager:
             'exit_price': round(exit_price, 2),
             'exit_time': exit_time.isoformat(),
             'pnl': round(pl, 2),
+            'duration_minutes': int((exit_time - pos['entry_time']).total_seconds() / 60),
         })
+
+    def realized_pnl(self):
+        return round(sum(t['pnl'] for t in self.trade_history), 2)
+
+    def open_positions_list(self):
+        return [
+            {
+                'symbol': p['symbol'],
+                'side': p['side'],
+                'entry_price': round(p['entry_price'], 2),
+                'entry_time': p['entry_time'].isoformat() if hasattr(p['entry_time'], 'isoformat') else p['entry_time'],
+            }
+            for p in self.open_positions.values()
+        ]
 
 
 def aggregate_qty(history, minutes):
@@ -211,7 +229,7 @@ def main():
     st.title("AI/ML Stock Screener — Demo")
     cfg = load_config()
     symbols = load_symbols()
-    provider_name = st.sidebar.selectbox("Provider", ["Mock", "Fyers", "Angel"], index=0)
+    provider_name = st.sidebar.selectbox("Provider", ["Yahoo", "Fyers", "Angel", "Mock"], index=0)
     provider, provider_warning = get_provider(provider_name, cfg, symbols)
     predictor = SignalPredictor()
 
@@ -229,6 +247,7 @@ def main():
     min_etq_60m = st.sidebar.number_input("Min ETQ (60m)", value=5000000, step=100000)
     refresh_sec = st.sidebar.number_input("Refresh (s)", value=5, min_value=1, max_value=30, step=1)
     show_depth = st.sidebar.checkbox("Show Market Depth", value=True)
+    retrain_model = st.sidebar.button("Retrain model from historical data")
 
     if 'run_demo' not in st.session_state:
         st.session_state.run_demo = False
@@ -239,7 +258,10 @@ def main():
         st.session_state.run_demo = True
     if st.button("Stop Live Demo", key="stop_live_demo"):
         st.session_state.run_demo = False
-
+    if retrain_model:
+        with st.spinner("Retraining model on historical data..."):
+            predictor.fit_on_historical(symbols=symbols, period='6mo')
+        st.success("Historical model retrained and saved.")
     placeholder = st.empty()
 
     if st.session_state.run_demo:
@@ -323,6 +345,17 @@ def main():
             df = pd.DataFrame(columns=["ltp"])
 
         placeholder.dataframe(df)
+
+        st.subheader("Portfolio Summary")
+        cols = st.columns(3)
+        cols[0].metric("Filtered Symbols", len(rows))
+        cols[1].metric("Open Positions", len(st.session_state.trade_manager.open_positions))
+        cols[2].metric("Realized P/L", f"₹{st.session_state.trade_manager.realized_pnl()}")
+
+        if st.session_state.trade_manager.open_positions:
+            st.markdown("**Open Positions**")
+            open_df = pd.DataFrame(st.session_state.trade_manager.open_positions_list()).set_index('symbol')
+            st.dataframe(open_df)
 
         if rows:
             csv = df.to_csv()

@@ -66,13 +66,18 @@ Security
 Training the ML predictor
 -------------------------
 
-To train a synthetic model (demo only):
+To train the predictor on real historical market data, install the new dependency and run:
 
 ```bash
+pip install -r requirements.txt
 python src/train_predictor.py
 ```
 
-This will produce `models/model.joblib`. The app will load this model automatically if present.
+This script downloads historical NSE data using `yfinance`, builds ETQ/LTQ and momentum features, trains the model, and saves `models/model.joblib`.
+
+The Streamlit app also supports retraining from the sidebar if you need to rebuild the model from live historical data.
+
+If a model file already exists, the app will load it automatically.
 
 Running tests
 -------------

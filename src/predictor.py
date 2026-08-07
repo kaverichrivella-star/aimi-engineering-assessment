@@ -69,6 +69,77 @@ class SignalPredictor:
         except Exception:
             pass
 
+    def fit_on_historical(self, symbols=None, period='6mo'):
+        try:
+            import yfinance as yf
+        except ImportError:
+            self.fit_on_synthetic()
+            return
+
+        symbols = symbols or ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFC.NS', 'ICICIBANK.NS']
+        X = []
+        y = []
+
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period=period, interval='1d')
+                if hist.shape[0] < 130:
+                    continue
+                hist = hist.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                closes = hist['Close']
+                volumes = hist['Volume']
+                highs = hist['High']
+                lows = hist['Low']
+                opens = hist['Open']
+
+                for i in range(120, len(hist) - 1):
+                    window = hist.iloc[i-120:i+1]
+                    ltq_2m = volumes.iloc[i-1:i+1].mean()
+                    ltq_5m = volumes.iloc[max(0, i-4):i+1].mean()
+                    etq_5m = volumes.iloc[max(0, i-4):i+1].sum()
+                    etq_20m = volumes.iloc[max(0, i-19):i+1].sum()
+                    etq_60m = volumes.iloc[max(0, i-59):i+1].sum()
+                    imbalance = ((closes.iloc[i] - opens.iloc[i]) / (opens.iloc[i] + 1e-9))
+                    spread = float((highs.iloc[i] - lows.iloc[i]) / (closes.iloc[i] + 1e-9))
+                    momentum_5m = float((closes.iloc[i] - closes.iloc[max(0, i-5)]) / (closes.iloc[max(0, i-5)] + 1e-9))
+                    returns = closes.pct_change().iloc[max(0, i-19):i+1]
+                    volatility_20m = float(returns.std()) if not returns.empty else 0.0
+                    smma_20 = np.mean(closes.iloc[max(0, i-19):i+1])
+                    smma_120 = np.mean(closes.iloc[max(0, i-119):i+1])
+                    smma_distance = float(smma_20 - smma_120)
+                    future_return = float((closes.iloc[i+1] - closes.iloc[i]) / (closes.iloc[i] + 1e-9))
+                    X.append([
+                        ltq_2m,
+                        ltq_5m,
+                        etq_5m,
+                        etq_20m,
+                        etq_60m,
+                        imbalance,
+                        spread,
+                        momentum_5m,
+                        volatility_20m,
+                        smma_distance,
+                    ])
+                    y.append(1 if future_return >= 0.002 else 0)
+            except Exception:
+                continue
+
+        if len(X) < 10:
+            self.fit_on_synthetic()
+            return
+
+        X = np.array(X)
+        y = np.array(y)
+
+        self.clf.fit(X, y)
+        self.fitted = True
+        try:
+            os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
+            joblib.dump(self.clf, self.model_path)
+        except Exception:
+            pass
+
     def predict_proba(self, features):
         if not self.fitted:
             self.fit_on_synthetic()
