@@ -25,15 +25,15 @@ class MockProvider(BaseProvider):
         self.history = defaultdict(lambda: deque())
         now = datetime.utcnow()
         for s in symbols:
-            price = random.uniform(50,200)
+            price = random.uniform(50, 200)
             self.state[s] = {
                 "price": price,
             }
             # seed 2 hours of 1-min bars
             for i in range(120):
-                t = now - timedelta(minutes=120-i)
-                p = price + random.uniform(-1,1)
-                qty = random.randint(100,1000)
+                t = now - timedelta(minutes=120 - i)
+                p = price + random.uniform(-1, 1)
+                qty = random.randint(200000, 800000)
                 self.history[s].append((t, p, qty))
 
     def step(self):
@@ -42,10 +42,10 @@ class MockProvider(BaseProvider):
             last = self.state[s]["price"]
             newp = max(1.0, last * (1 + random.uniform(-0.002, 0.002)))
             self.state[s]["price"] = newp
-            qty = random.randint(1,5000)
+            qty = random.randint(50000, 500000)
             self.history[s].append((now, newp, qty))
             # keep 24 hours of 1-min points
-            while len(self.history[s]) > 60*24:
+            while len(self.history[s]) > 60 * 24:
                 self.history[s].popleft()
 
     def get_symbols(self):
@@ -56,14 +56,13 @@ class MockProvider(BaseProvider):
         return {"symbol": symbol, "ltp": p}
 
     def get_depth(self, symbol):
-        # return random depth
         p = self.state[symbol]["price"]
         spread = max(0.01, p * 0.0005)
         return {
             "bid_price": round(p - spread, 2),
-            "bid_qty": random.randint(1,2000),
+            "bid_qty": random.randint(1000000, 2500000),
             "ask_price": round(p + spread, 2),
-            "ask_qty": random.randint(1,2000),
+            "ask_qty": random.randint(1000000, 2500000),
         }
 
     def get_history(self, symbol, minutes):

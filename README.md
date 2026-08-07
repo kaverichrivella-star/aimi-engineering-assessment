@@ -41,7 +41,15 @@ To enable a live broker adapter:
 1. Copy `.env.example` to `.env` and fill your keys.
 2. Update `src/config.py` if you prefer another configuration mechanism.
 3. Implement the HTTP calls in the adapter methods (see inline comments).
-4. In `src/app.py` replace `MockProvider` with a provider class that wraps the adapter methods and returns the required shapes (latest, history, depth).
+3. In `src/app.py` select `Fyers` or `Angel` from the provider dropdown. The app will attempt to fetch an NSE symbol list from the configured instrument map endpoint and fall back to the local `symbols.csv` list if needed.
+
+If you want to add real symbols for a live broker integration, set:
+
+- `FYERS_INSTRUMENT_MAP_ENDPOINT`
+- `ANGEL_INSTRUMENT_MAP_ENDPOINT`
+
+The adapter will use those endpoints to fetch symbols compatible with the broker API.
+
 
 Provider selection
 ------------------

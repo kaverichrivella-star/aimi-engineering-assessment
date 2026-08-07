@@ -22,7 +22,7 @@ class FyersAdapter:
         self.api_key = cfg.get('api_key') or cfg.get('FYERS_API_KEY')
         self.access_token = cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN')
         self.base = cfg.get('base', 'https://api.fyers.in')
-        self.instrument_map_endpoint = cfg.get('instrument_map_endpoint')
+        self.instrument_map_endpoint = cfg.get('instrument_map_endpoint') or cfg.get('FYERS_INSTRUMENT_MAP_ENDPOINT')
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
         self.session.mount('https://', HTTPAdapter(max_retries=retries))

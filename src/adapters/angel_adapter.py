@@ -20,7 +20,11 @@ class AngelAdapter:
         self.client_id = cfg.get('client_id')
         self.api_key = cfg.get('api_key')
         self.base = cfg.get('base', 'https://api.angelone.in')
-        self.instrument_map_endpoint = cfg.get('instrument_map_endpoint')
+        self.instrument_map_endpoint = (
+            cfg.get('angel_instrument_map_endpoint')
+            or cfg.get('ANGEL_INSTRUMENT_MAP_ENDPOINT')
+            or cfg.get('instrument_map_endpoint')
+        )
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
         self.session.mount('https://', HTTPAdapter(max_retries=retries))
