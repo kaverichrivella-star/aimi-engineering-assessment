@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 import joblib
 import os
+from indicators import smma
 
 FEATURE_NAMES = [
     'ltq_2m',
@@ -69,7 +70,7 @@ class SignalPredictor:
         except Exception:
             pass
 
-    def fit_on_historical(self, symbols=None, period='6mo'):
+    def fit_on_historical(self, symbols=None, period='7d', interval='1m'):
         try:
             import yfinance as yf
         except ImportError:
@@ -83,8 +84,8 @@ class SignalPredictor:
         for symbol in symbols:
             try:
                 ticker = yf.Ticker(symbol)
-                hist = ticker.history(period=period, interval='1d')
-                if hist.shape[0] < 130:
+                hist = ticker.history(period=period, interval=interval)
+                if hist.empty or len(hist) < 120:
                     continue
                 hist = hist.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                 closes = hist['Close']
@@ -92,23 +93,23 @@ class SignalPredictor:
                 highs = hist['High']
                 lows = hist['Low']
                 opens = hist['Open']
+                returns = closes.pct_change()
+                smma_20 = smma(closes, 20)
+                smma_60 = smma(closes, 60)
 
-                for i in range(120, len(hist) - 1):
-                    window = hist.iloc[i-120:i+1]
-                    ltq_2m = volumes.iloc[i-1:i+1].mean()
+                for i in range(60, len(hist) - 5):
+                    close_i = closes.iloc[i]
+                    ltq_2m = volumes.iloc[max(0, i-1):i+1].mean()
                     ltq_5m = volumes.iloc[max(0, i-4):i+1].mean()
                     etq_5m = volumes.iloc[max(0, i-4):i+1].sum()
                     etq_20m = volumes.iloc[max(0, i-19):i+1].sum()
                     etq_60m = volumes.iloc[max(0, i-59):i+1].sum()
-                    imbalance = ((closes.iloc[i] - opens.iloc[i]) / (opens.iloc[i] + 1e-9))
-                    spread = float((highs.iloc[i] - lows.iloc[i]) / (closes.iloc[i] + 1e-9))
-                    momentum_5m = float((closes.iloc[i] - closes.iloc[max(0, i-5)]) / (closes.iloc[max(0, i-5)] + 1e-9))
-                    returns = closes.pct_change().iloc[max(0, i-19):i+1]
-                    volatility_20m = float(returns.std()) if not returns.empty else 0.0
-                    smma_20 = np.mean(closes.iloc[max(0, i-19):i+1])
-                    smma_120 = np.mean(closes.iloc[max(0, i-119):i+1])
-                    smma_distance = float(smma_20 - smma_120)
-                    future_return = float((closes.iloc[i+1] - closes.iloc[i]) / (closes.iloc[i] + 1e-9))
+                    imbalance = float((close_i - opens.iloc[i]) / (opens.iloc[i] + 1e-9))
+                    spread = float((highs.iloc[i] - lows.iloc[i]) / (close_i + 1e-9))
+                    momentum_5m = float((close_i - closes.iloc[max(0, i-5)]) / (closes.iloc[max(0, i-5)] + 1e-9))
+                    volatility_20m = float(returns.iloc[max(0, i-19):i+1].std()) if not returns.iloc[max(0, i-19):i+1].empty else 0.0
+                    smma_distance = float(smma_20.iloc[i] - smma_60.iloc[i]) if not np.isnan(smma_20.iloc[i]) and not np.isnan(smma_60.iloc[i]) else 0.0
+                    future_return = float((closes.iloc[i+5] - close_i) / (close_i + 1e-9))
                     X.append([
                         ltq_2m,
                         ltq_5m,
@@ -121,11 +122,11 @@ class SignalPredictor:
                         volatility_20m,
                         smma_distance,
                     ])
-                    y.append(1 if future_return >= 0.002 else 0)
+                    y.append(1 if future_return >= 0.001 else 0)
             except Exception:
                 continue
 
-        if len(X) < 10:
+        if len(X) < 50:
             self.fit_on_synthetic()
             return
 

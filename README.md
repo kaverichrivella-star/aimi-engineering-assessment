@@ -1,109 +1,126 @@
 # AI/ML Stock Screener (Streamlit)
 
-This scaffold provides a Streamlit-based starter for the Assignment 1 screening application. It includes:
+A live-capable stock screening dashboard built for the Assignment 1 assessment.
+It combines market data adapters, liquidity filters, ETQ/LTP analytics, AI signal scoring,
+trade lifecycle tracking, and a retrainable ML predictor.
 
-- Modular data provider adapters (Mock, placeholders for Fyers/AngelOne).
-- Indicator calculations (SMMA) and crossover detection.
-- A mock real-time dashboard to demonstrate layout and flows.
+## Features
 
-Setup
+- Live provider selection: `Yahoo`, `Fyers`, `Angel`, `Mock`
+- Broker wrapper support for Fyers and Angel One with Yahoo fallback
+- Liquidity filters: bid/ask quantity, ETQ over 5/20/60 minutes
+- Short-term average price: 20-minute and 60-minute average LTP
+- SMMA-based signal generation with BUY/SELL crossover logic
+- AI confidence score and explanation text per signal
+- Trade manager for open positions, realized/unrealized P&L, and trade history
+- Historical model training from real market data via `yfinance`
+- One-click `.exe` build support using `pyinstaller`
 
-1. Create a Python virtual environment and install dependencies:
+## Setup
 
-```bash
+```powershell
+cd /workspace/stock_screener
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-2. To run the demo (uses mock data):
+## Run the app
 
-```bash
+```powershell
 streamlit run src/app.py
 ```
 
-Notes
+## Data providers
 
-- Replace or implement the `FyersProvider` / `AngelProvider` in `src/providers.py` with real API calls and credentials.
-- The mock provider simulates trade quantities, prices and depth for development.
-- Packaging to `.exe` can be done with `pyinstaller` once credentials and live adapters are implemented.
+- `Yahoo`: live price and historic bars from Yahoo Finance
+- `Fyers`: live broker integration via `src/adapters/fyers_adapter.py`
+- `Angel`: live broker integration via `src/adapters/angel_adapter.py`
+- `Mock`: synthetic local market data for development
 
-Broker Integration
-------------------
+The app will use the selected provider and fall back to Yahoo data when broker credentials or endpoints are unavailable.
 
-This scaffold includes adapter skeletons for both brokers under `src/adapters/`:
+## Configuration
 
-- `src/adapters/fyers_adapter.py` — Fyers adapter skeleton with method stubs.
-- `src/adapters/angel_adapter.py` — Angel One adapter skeleton with method stubs.
+Create a `.env` file from `.env.example` and fill values for the providers you want to use.
 
-To enable a live broker adapter:
+Required keys for Fyers:
 
-1. Copy `.env.example` to `.env` and fill your keys.
-2. Update `src/config.py` if you prefer another configuration mechanism.
-3. Implement the HTTP calls in the adapter methods (see inline comments).
-3. In `src/app.py` select `Fyers` or `Angel` from the provider dropdown. The app will attempt to fetch an NSE symbol list from the configured instrument map endpoint and fall back to the local `symbols.csv` list if needed.
+- `FYERS_API_KEY`
+- `FYERS_ACCESS_TOKEN`
+- `FYERS_INSTRUMENT_MAP_ENDPOINT` (optional, recommended)
 
-If you want to add real symbols for a live broker integration, set:
+Required keys for Angel One:
 
-- `FYERS_INSTRUMENT_MAP_ENDPOINT`
-- `ANGEL_INSTRUMENT_MAP_ENDPOINT`
+- `ANGEL_API_KEY`
+- `ANGEL_CLIENT_ID`
+- `ANGEL_INSTRUMENT_MAP_ENDPOINT` (optional)
 
-The adapter will use those endpoints to fetch symbols compatible with the broker API.
+The app reads environment variables through `src/config.py` using `python-dotenv`.
 
+## Using live broker adapters
 
-Provider selection
-------------------
+1. Copy `.env.example` to `.env`.
+2. Fill broker credentials and instrument map endpoints.
+3. Start the app and choose `Fyers` or `Angel` in the sidebar.
+4. Verify the provider returns symbol, quote, depth, and history data.
 
-The Streamlit app sidebar allows selecting the data provider: `Mock`, `Fyers`, or `Angel`.
-Set credentials in `.env` and choose the provider; the app will attempt to call the adapter endpoints. See `INTEGRATION_CHECKLIST.md` for step-by-step tests.
+If the adapter cannot retrieve live data, the app falls back to Yahoo Finance for pricing and history.
 
-Security
---------
+## Filters and dashboard
 
-- Do NOT commit your `.env` or credentials. Use `.gitignore` to exclude them.
-- Mask or remove any API keys before sharing code or recordings.
+Use the sidebar to tune:
 
-Training the ML predictor
--------------------------
+- minimum and maximum LTP
+- minimum bid and ask liquidity
+- minimum ETQ thresholds for 5m, 20m, and 60m
+- market-depth display
+- AI reasoning visibility
+- refresh interval
 
-To train the predictor on real historical market data, install the new dependency and run:
+The app displays:
 
-```bash
-pip install -r requirements.txt
+- screened symbols and signal decisions
+- trade summary metrics
+- open positions with unrealized P/L
+- realized trade history
+- downloadable results snapshot
+
+## Train the ML predictor
+
+Save a trained model with:
+
+```powershell
 python src/train_predictor.py
 ```
 
-This script downloads historical NSE data using `yfinance`, builds ETQ/LTQ and momentum features, trains the model, and saves `models/model.joblib`.
+This downloads live historical data, computes ETQ/LTQ, momentum and SMMA features,
+trains a `RandomForestClassifier`, and saves `models/model.joblib`.
 
-The Streamlit app also supports retraining from the sidebar if you need to rebuild the model from live historical data.
+The app can also retrain the model from the sidebar.
 
-If a model file already exists, the app will load it automatically.
-
-Running tests
--------------
-
-Run the unit tests with:
-
-```bash
-pytest -q
-```
-
-Building a single executable (Windows PowerShell)
------------------------------------------------
+## Tests
 
 Run:
+
+```powershell
+python -m pytest -q
+```
+
+## Build executable
+
+Create a Windows `.exe` with:
 
 ```powershell
 .\build_exe.ps1
 ```
 
-Demo recording
---------------
+## Demo recording
 
-Record your screen using `ffmpeg` (install separately). Example command for Windows:
+Use a screen recorder such as `ffmpeg`:
 
 ```powershell
 ffmpeg -f gdigrab -framerate 15 -offset_x 0 -offset_y 0 -video_size 1920x1080 -i desktop -codec:v libx264 -preset ultrafast demo.mp4
 ```
 
-Remember to mask or remove credentials from the UI before recording.
+> Keep API keys and `.env` contents private when recording or sharing demo videos.

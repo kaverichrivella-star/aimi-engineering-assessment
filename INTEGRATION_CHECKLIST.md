@@ -2,21 +2,37 @@ Integration Checklist — Broker Adapter
 
 1. Add credentials to `.env` (do NOT commit):
 
-   - For Fyers: `FYERS_API_KEY`, `FYERS_ACCESS_TOKEN`, optionally `FYERS_INSTRUMENTS_ENDPOINT`.
-   - For Angel One: `ANGEL_API_KEY`, `ANGEL_CLIENT_ID`, optionally `ANGEL_INSTRUMENTS_ENDPOINT`.
+   - For Fyers: `FYERS_API_KEY`, `FYERS_ACCESS_TOKEN`, `FYERS_INSTRUMENT_MAP_ENDPOINT`.
+   - For Angel One: `ANGEL_API_KEY`, `ANGEL_CLIENT_ID`, `ANGEL_INSTRUMENT_MAP_ENDPOINT`.
 
-2. Configure `src/config.py` (or set env vars).
+2. Confirm `src/config.py` loads your env vars. If needed, set them manually in the environment.
 
-3. Start the Streamlit app and select provider from the sidebar.
+3. Start the Streamlit app and select `Fyers` or `Angel` from the provider dropdown.
 
-4. Verify `get_symbols()` returns NSE symbols. If using a custom instrument map endpoint, ensure it returns JSON array with `symbol` or `tradingsymbol`.
+4. Validate provider status in the UI message:
+   - If live credentials are missing, the app uses Yahoo fallback data.
+   - If live broker data is available, the provider should return quoted symbols.
 
-5. Test `get_latest(symbol)` for a few symbols and confirm returned `ltp` is numeric.
+5. Verify symbol feed:
+   - `get_symbols()` returns NSE symbols.
+   - Instrument list should include `RELIANCE`, `TCS`, `INFY`, or other NSE tickers.
 
-6. Test `get_depth(symbol)` and confirm `bid_price`, `ask_price`, `bid_qty`, `ask_qty` are present.
+6. Verify pricing and liquidity endpoints:
+   - `get_latest(symbol)` returns `{'symbol', 'ltp'}`.
+   - `get_depth(symbol)` returns `bid_price`, `ask_price`, `bid_qty`, and `ask_qty`.
 
-7. Test `get_history(symbol, minutes)` for 5/20/60 and verify time ordering and price/qty values.
+7. Verify history endpoints:
+   - `get_history(symbol, minutes)` works for 5, 20, 60, and 120.
+   - Returned bars should include timestamp, price, and volume.
 
-8. Monitor rate limits and adjust `refresh (s)` in UI.
+8. Test the app filters:
+   - Loosen `Min LTP`, `Min Bid Qty`, `Min Ask Qty`, and ETQ thresholds if no symbols pass.
+   - Use the `Show reasoning` toggle to inspect AI explanations.
 
-9. If available, consider switching to WebSocket/streaming endpoint for lower-latency updates.
+9. Review P/L tracking:
+   - Confirm open positions appear in the dashboard.
+   - Confirm realized and unrealized P/L update as new signals arrive.
+
+10. Optional:
+   - Use `python src/train_predictor.py` to train a fresh model from historical data.
+   - Build the executable with `.uild_exe.ps1`.

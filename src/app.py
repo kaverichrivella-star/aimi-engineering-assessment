@@ -4,9 +4,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from providers import MockProvider, YFinanceProvider
-from adapters.fyers_adapter import FyersAdapter
-from adapters.angel_adapter import AngelAdapter
+from providers import MockProvider, YFinanceProvider, FyersProvider, AngelProvider
 from config import load_config
 from indicators import smma, detect_crossovers
 from predictor import SignalPredictor
@@ -33,71 +31,30 @@ def load_symbols(filepath: Path = SYMBOL_FILE):
 
 
 @st.cache_resource
-def get_provider(provider_name: str = 'Mock', cfg: dict | None = None, symbols=None):
+def get_provider(provider_name: str = 'Fyers', cfg: dict | None = None, symbols=None):
     cfg = cfg or {}
     symbols = symbols or load_symbols()
-    provider_name = provider_name or 'Mock'
+    provider_name = provider_name or 'Fyers'
 
     if provider_name.lower() == 'mock':
-        return MockProvider(symbols), None
+        return MockProvider(symbols), 'Mock provider active.'
 
     if provider_name.lower() == 'yahoo':
         return YFinanceProvider(symbols), None
 
     if provider_name.lower() == 'fyers':
-        adapter = FyersAdapter(cfg)
-        if not (cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN')):
-            return MockProvider(symbols), 'Fyers access token not configured. Running mock demo instead.'
-        try:
-            live_symbols = adapter.get_symbols()
-            if live_symbols:
-                return AdapterProvider(adapter, live_symbols), None
-            return AdapterProvider(adapter, symbols), 'Fyers adapter returned no symbols. Running on fallback symbol list.'
-        except Exception as exc:
-            return MockProvider(symbols), f'Fyers adapter fallback to mock: {exc}'
+        provider = FyersProvider(cfg, symbols)
+        if not provider.use_live:
+            return provider, 'FYERS credentials not configured. Using Yahoo fallback data instead.'
+        return provider, None
 
     if provider_name.lower() in ('angel', 'angelone', 'angel_one'):
-        adapter = AngelAdapter(cfg)
-        if not (cfg.get('angel_api_key') or cfg.get('ANGEL_API_KEY')):
-            return MockProvider(symbols), 'Angel One API key not configured. Running mock demo instead.'
-        try:
-            live_symbols = adapter.get_symbols()
-            if live_symbols:
-                return AdapterProvider(adapter, live_symbols), None
-            return AdapterProvider(adapter, symbols), 'Angel adapter returned no symbols. Running on fallback symbol list.'
-        except Exception as exc:
-            return MockProvider(symbols), f'Angel adapter fallback to mock: {exc}'
+        provider = AngelProvider(cfg, symbols)
+        if not provider.use_live:
+            return provider, 'Angel One credentials not configured. Using Yahoo fallback data instead.'
+        return provider, None
 
-    return MockProvider(symbols), None
-
-
-class AdapterProvider:
-    """Wraps a broker adapter to present the same methods used by the demo app.
-
-    Adapter must expose: get_symbols(), get_latest(symbol), get_depth(symbol), get_history(symbol, minutes)
-    """
-    def __init__(self, adapter, symbols=None):
-        self.adapter = adapter
-        self._symbols = symbols or []
-
-    def step(self):
-        # No streaming step for REST adapters; noop
-        time.sleep(0)
-
-    def get_symbols(self):
-        try:
-            return self.adapter.get_symbols()
-        except Exception:
-            return self._symbols
-
-    def get_latest(self, symbol):
-        return self.adapter.get_latest(symbol)
-
-    def get_depth(self, symbol):
-        return self.adapter.get_depth(symbol)
-
-    def get_history(self, symbol, minutes):
-        return self.adapter.get_history(symbol, minutes)
+    return MockProvider(symbols), 'Unknown provider selected; using mock data.'
 
 
 class TradeManager:
@@ -147,16 +104,33 @@ class TradeManager:
     def realized_pnl(self):
         return round(sum(t['pnl'] for t in self.trade_history), 2)
 
-    def open_positions_list(self):
-        return [
-            {
+    def open_positions_list(self, latest_prices=None):
+        latest_prices = latest_prices or {}
+        rows = []
+        for p in self.open_positions.values():
+            current_price = latest_prices.get(p['symbol'])
+            unrealized = None
+            if current_price is not None:
+                unrealized = current_price - p['entry_price'] if p['side'] == 'BUY' else p['entry_price'] - current_price
+            rows.append({
                 'symbol': p['symbol'],
                 'side': p['side'],
                 'entry_price': round(p['entry_price'], 2),
                 'entry_time': p['entry_time'].isoformat() if hasattr(p['entry_time'], 'isoformat') else p['entry_time'],
-            }
-            for p in self.open_positions.values()
-        ]
+                'current_price': round(current_price, 2) if current_price is not None else None,
+                'unrealized_pnl': round(unrealized, 2) if unrealized is not None else None,
+            })
+        return rows
+
+    def unrealized_pnl(self, latest_prices=None):
+        latest_prices = latest_prices or {}
+        total = 0.0
+        for p in self.open_positions.values():
+            current_price = latest_prices.get(p['symbol'])
+            if current_price is None:
+                continue
+            total += current_price - p['entry_price'] if p['side'] == 'BUY' else p['entry_price'] - current_price
+        return round(total, 2)
 
 
 def aggregate_qty(history, minutes):
@@ -229,7 +203,7 @@ def main():
     st.title("AI/ML Stock Screener — Demo")
     cfg = load_config()
     symbols = load_symbols()
-    provider_name = st.sidebar.selectbox("Provider", ["Yahoo", "Fyers", "Angel", "Mock"], index=0)
+    provider_name = st.sidebar.selectbox("Provider", ["Yahoo", "Fyers", "Angel", "Mock"], index=1)
     provider, provider_warning = get_provider(provider_name, cfg, symbols)
     predictor = SignalPredictor()
 
@@ -247,6 +221,7 @@ def main():
     min_etq_60m = st.sidebar.number_input("Min ETQ (60m)", value=5000000, step=100000)
     refresh_sec = st.sidebar.number_input("Refresh (s)", value=5, min_value=1, max_value=30, step=1)
     show_depth = st.sidebar.checkbox("Show Market Depth", value=True)
+    show_explanation = st.sidebar.checkbox("Show reasoning", value=True)
     retrain_model = st.sidebar.button("Retrain model from historical data")
 
     if 'run_demo' not in st.session_state:
@@ -267,6 +242,8 @@ def main():
     if st.session_state.run_demo:
         provider.step()
         rows = []
+        latest_prices = {}
+        filtered = 0
         for s in provider.get_symbols():
             hist5 = provider.get_history(s, 5)
             hist20 = provider.get_history(s, 20)
@@ -274,7 +251,9 @@ def main():
             hist120 = provider.get_history(s, 120)
 
             l = provider.get_latest(s)
-            p = l["ltp"]
+            p = l.get("ltp")
+            if p is None:
+                continue
 
             # Price filter
             if p < price_min or p > price_max:
@@ -313,7 +292,7 @@ def main():
             features = build_feature_vector(hist5, hist20, hist60, hist120, depth)
             prob = predictor.predict_proba(features)
             decision = decision_from_signal(signal, prob)
-            explanation = predictor.explain(features, signal, prob)
+            explanation = predictor.explain(features, signal, prob) if show_explanation else ''
 
             row = {
                 "symbol": s,
@@ -337,7 +316,12 @@ def main():
                 "explanation": explanation,
             }
             rows.append(row)
+            latest_prices[s] = p
+            filtered += 1
             st.session_state.trade_manager.update(s, signal, decision, p, datetime.utcnow())
+
+        if filtered == 0 and provider.get_symbols():
+            st.info("No symbols passed the current filters. Loosen liquidity or price filters to see more signals.")
 
         if rows:
             df = pd.DataFrame(rows).set_index("symbol")
@@ -346,15 +330,17 @@ def main():
 
         placeholder.dataframe(df)
 
+        open_unrealized = st.session_state.trade_manager.unrealized_pnl(latest_prices)
         st.subheader("Portfolio Summary")
-        cols = st.columns(3)
+        cols = st.columns(4)
         cols[0].metric("Filtered Symbols", len(rows))
         cols[1].metric("Open Positions", len(st.session_state.trade_manager.open_positions))
         cols[2].metric("Realized P/L", f"₹{st.session_state.trade_manager.realized_pnl()}")
+        cols[3].metric("Unrealized P/L", f"₹{open_unrealized}")
 
         if st.session_state.trade_manager.open_positions:
             st.markdown("**Open Positions**")
-            open_df = pd.DataFrame(st.session_state.trade_manager.open_positions_list()).set_index('symbol')
+            open_df = pd.DataFrame(st.session_state.trade_manager.open_positions_list(latest_prices)).set_index('symbol')
             st.dataframe(open_df)
 
         if rows:

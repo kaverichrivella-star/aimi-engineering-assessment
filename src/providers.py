@@ -3,6 +3,10 @@ import random
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 
+from adapters.fyers_adapter import FyersAdapter
+from adapters.angel_adapter import AngelAdapter
+
+
 class BaseProvider:
     def get_symbols(self):
         raise NotImplementedError()
@@ -130,41 +134,100 @@ class YFinanceProvider(BaseProvider):
 
 
 class FyersProvider(BaseProvider):
-    """Placeholder for a Fyers API adapter.
-    Implement authentication and fetches here.
-    See README for notes on adding API keys.
-    """
-    def __init__(self, api_key, access_token):
-        self.api_key = api_key
-        self.access_token = access_token
+    """Live Fyers provider wrapper with optional Yahoo fallback."""
+    def __init__(self, cfg, symbols=None):
+        self.symbols = symbols or []
+        self.use_live = bool(cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN'))
+        self.adapter = FyersAdapter(cfg) if self.use_live else None
+        self.fallback = YFinanceProvider(self.symbols)
+
+    def step(self):
+        time.sleep(0)
 
     def get_symbols(self):
-        raise NotImplementedError("Implement Fyers symbol list retrieval")
+        if self.adapter:
+            try:
+                symbols = self.adapter.get_symbols()
+                if symbols:
+                    return symbols
+            except Exception:
+                pass
+        return self.symbols
 
     def get_latest(self, symbol):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                return self.adapter.get_latest(symbol)
+            except Exception:
+                pass
+        return self.fallback.get_latest(symbol)
 
     def get_depth(self, symbol):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                depth = self.adapter.get_depth(symbol)
+                if depth and depth.get('bid_qty') is not None and depth.get('ask_qty') is not None:
+                    return depth
+            except Exception:
+                pass
+        return self.fallback.get_depth(symbol)
 
     def get_history(self, symbol, minutes):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                history = self.adapter.get_history(symbol, minutes)
+                if history:
+                    return history
+            except Exception:
+                pass
+        return self.fallback.get_history(symbol, minutes)
 
 
 class AngelProvider(BaseProvider):
-    """Placeholder for an Angel One API adapter."""
-    def __init__(self, client_id, api_key):
-        self.client_id = client_id
-        self.api_key = api_key
+    """Live Angel One provider wrapper with optional Yahoo fallback."""
+    def __init__(self, cfg, symbols=None):
+        self.symbols = symbols or []
+        self.use_live = bool(cfg.get('angel_api_key') or cfg.get('ANGEL_API_KEY'))
+        self.adapter = AngelAdapter(cfg) if self.use_live else None
+        self.fallback = YFinanceProvider(self.symbols)
+
+    def step(self):
+        time.sleep(0)
 
     def get_symbols(self):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                symbols = self.adapter.get_symbols()
+                if symbols:
+                    return symbols
+            except Exception:
+                pass
+        return self.symbols
 
     def get_latest(self, symbol):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                return self.adapter.get_latest(symbol)
+            except Exception:
+                pass
+        return self.fallback.get_latest(symbol)
 
     def get_depth(self, symbol):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                depth = self.adapter.get_depth(symbol)
+                if depth and depth.get('bid_qty') is not None and depth.get('ask_qty') is not None:
+                    return depth
+            except Exception:
+                pass
+        return self.fallback.get_depth(symbol)
 
     def get_history(self, symbol, minutes):
-        raise NotImplementedError()
+        if self.adapter:
+            try:
+                history = self.adapter.get_history(symbol, minutes)
+                if history:
+                    return history
+            except Exception:
+                pass
+        return self.fallback.get_history(symbol, minutes)

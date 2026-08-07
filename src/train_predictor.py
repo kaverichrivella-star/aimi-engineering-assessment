@@ -21,7 +21,7 @@ def main():
         'SBIN.NS',
     ]
     predictor = SignalPredictor()
-    predictor.fit_on_historical(symbols=symbols, period='9mo')
+    predictor.fit_on_historical(symbols=symbols, period='7d', interval='1m')
     print('Historical model trained and saved to', predictor.model_path)
 
 
