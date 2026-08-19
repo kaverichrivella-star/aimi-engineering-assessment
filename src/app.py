@@ -5,6 +5,13 @@ from datetime import datetime
 from pathlib import Path
 
 from providers import MockProvider, YFinanceProvider, FyersProvider, AngelProvider
+from paper_trading import (
+    CaptureStore,
+    PaperTradeBook,
+    evaluate_next_day,
+    train_from_capture,
+)
+from predictor import FEATURE_NAMES
 from config import load_config
 from indicators import smma, detect_crossovers
 from predictor import SignalPredictor
@@ -206,6 +213,8 @@ def main():
     provider_name = st.sidebar.selectbox("Provider", ["Yahoo", "Fyers", "Angel", "Mock"], index=1)
     provider, provider_warning = get_provider(provider_name, cfg, symbols)
     predictor = SignalPredictor()
+    capture_store = CaptureStore(ROOT / "data" / "captures")
+    model_path = ROOT / "models" / "model.joblib"
 
     if provider_warning:
         st.warning(provider_warning)
@@ -228,6 +237,14 @@ def main():
         st.session_state.run_demo = False
     if 'trade_manager' not in st.session_state:
         st.session_state.trade_manager = TradeManager()
+    if 'paper_book' not in st.session_state:
+        st.session_state.paper_book = PaperTradeBook()
+    if 'validation_result' not in st.session_state:
+        st.session_state.validation_result = None
+    if 'validation_summary' not in st.session_state:
+        st.session_state.validation_summary = None
+    if 'training_summary' not in st.session_state:
+        st.session_state.training_summary = None
 
     if st.button("Start Live Demo", key="start_live_demo"):
         st.session_state.run_demo = True
@@ -235,8 +252,46 @@ def main():
         st.session_state.run_demo = False
     if retrain_model:
         with st.spinner("Retraining model on historical data..."):
-            predictor.fit_on_historical(symbols=symbols, period='6mo')
+            predictor.fit_on_historical(symbols=symbols, period='7d', interval='1m')
         st.success("Historical model retrained and saved.")
+
+    available_captures = sorted((ROOT / "data" / "captures").glob("capture_*.csv"))
+    capture_options = [str(path) for path in available_captures]
+    training_capture = st.sidebar.selectbox(
+        "Training-day capture",
+        capture_options,
+        index=max(len(capture_options) - 2, 0) if capture_options else None,
+        placeholder="Collect a complete training day first",
+    )
+    validation_capture = st.sidebar.selectbox(
+        "Following-day capture",
+        capture_options,
+        index=len(capture_options) - 1 if capture_options else None,
+        placeholder="Collect the following trading day first",
+    )
+    train_capture = st.sidebar.button("Train from training-day capture")
+    validate_capture = st.sidebar.button("Validate next-day signals")
+
+    if train_capture:
+        if not training_capture:
+            st.error("No training capture selected. Collect a complete trading day first.")
+        else:
+            with st.spinner("Training from captured market data..."):
+                st.session_state.training_summary = train_from_capture(
+                    capture_store.load(Path(training_capture)), model_path
+                )
+            st.success("Model trained from the selected capture.")
+
+    if validate_capture:
+        if not validation_capture or not model_path.exists():
+            st.error("Select a following-day capture and train a model before validation.")
+        else:
+            with st.spinner("Evaluating crossover signals and paper-trade outcomes..."):
+                result, summary = evaluate_next_day(
+                    capture_store.load(Path(validation_capture)), model_path
+                )
+                st.session_state.validation_result = result
+                st.session_state.validation_summary = summary
     placeholder = st.empty()
 
     if st.session_state.run_demo:
@@ -315,10 +370,17 @@ def main():
                 "prob_signal": round(prob, 2),
                 "explanation": explanation,
             }
+            row.update(dict(zip(FEATURE_NAMES, features)))
             rows.append(row)
             latest_prices[s] = p
             filtered += 1
             st.session_state.trade_manager.update(s, signal, decision, p, datetime.utcnow())
+            if decision == "Accept":
+                st.session_state.paper_book.apply(
+                    s, signal, p, datetime.utcnow(), reason=explanation
+                )
+
+        capture_path = capture_store.append(rows, datetime.utcnow())
 
         if filtered == 0 and provider.get_symbols():
             st.info("No symbols passed the current filters. Loosen liquidity or price filters to see more signals.")
@@ -337,6 +399,15 @@ def main():
         cols[1].metric("Open Positions", len(st.session_state.trade_manager.open_positions))
         cols[2].metric("Realized P/L", f"₹{st.session_state.trade_manager.realized_pnl()}")
         cols[3].metric("Unrealized P/L", f"₹{open_unrealized}")
+
+        paper_summary = st.session_state.paper_book.summary()
+        st.subheader("Paper-trading performance")
+        with st.container(horizontal=True):
+            st.metric("Paper trades", paper_summary["paper_trades"], border=True)
+            st.metric("Profitable", f'{paper_summary["profitable_trades"]} ({paper_summary["profitable_pct"]}%)', border=True)
+            st.metric("Unsuccessful", f'{paper_summary["unsuccessful_trades"]} ({paper_summary["unsuccessful_pct"]}%)', border=True)
+            st.metric("Paper P/L", paper_summary["overall_pnl"], border=True)
+        st.caption(f"Daily capture: {capture_path}")
 
         if st.session_state.trade_manager.open_positions:
             st.markdown("**Open Positions**")
@@ -358,6 +429,27 @@ def main():
             st.subheader("Trade History")
             trade_df = pd.DataFrame(st.session_state.trade_manager.trade_history)
             st.dataframe(trade_df)
+
+    if st.session_state.training_summary:
+        st.subheader("Training report")
+        st.json(st.session_state.training_summary)
+
+    if st.session_state.validation_summary:
+        summary = st.session_state.validation_summary
+        st.subheader("Next-day validation")
+        with st.container(horizontal=True):
+            st.metric("Crossover signals", summary["crossover_signals"], border=True)
+            st.metric("Accepted", summary["accepted_signals"], border=True)
+            st.metric("Avoided", f'{summary["avoided_signals"]} ({summary["avoided_pct"]}%)', border=True)
+            st.metric("Overall P/L %", summary["overall_pnl_pct"], border=True)
+        st.write({
+            "successful_trades": summary["successful_trades"],
+            "unsuccessful_trades": summary["unsuccessful_trades"],
+            "success_pct": summary["success_pct"],
+            "failure_pct": summary["failure_pct"],
+        })
+        if st.session_state.validation_result is not None and not st.session_state.validation_result.empty:
+            st.dataframe(st.session_state.validation_result)
 
         time.sleep(refresh_sec)
         st.experimental_rerun()

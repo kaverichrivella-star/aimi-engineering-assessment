@@ -19,6 +19,7 @@ def load_config() -> Dict[str, str]:
     return {
         'api_key': _env('FYERS_API_KEY', 'FYERS_APIKEY', 'FYERS_KEY'),
         'access_token': _env('FYERS_ACCESS_TOKEN', 'FYERS_TOKEN', 'FYERS_ACCESS'),
+        'FYERS_BASE_URL': _env('FYERS_BASE_URL') or 'https://api-t1.fyers.in',
         'instrument_map_endpoint': _env('FYERS_INSTRUMENT_MAP_ENDPOINT', 'FYERS_INSTRUMENT_MAP_URL'),
         'angel_instrument_map_endpoint': _env('ANGEL_INSTRUMENT_MAP_ENDPOINT', 'ANGEL_INSTRUMENT_MAP_URL'),
         'angel_client_id': _env('ANGEL_CLIENT_ID', 'ANGEL_CLIENTID'),

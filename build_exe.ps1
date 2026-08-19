@@ -1,9 +1,15 @@
-# PowerShell script to build a single-file executable using pyinstaller
+# PowerShell script to build a single-file Streamlit executable using PyInstaller.
 param(
-    [string]$entry = "src/app.py",
+    [string]$entry = "launcher.py",
     [string]$name = "stock_screener"
 )
 
-pyinstaller --onefile --name $name $entry
+python -m PyInstaller --clean --noconfirm --onefile --name $name `
+    --collect-all streamlit `
+    --collect-all yfinance `
+    --add-data "src;src" `
+    --add-data "symbols.csv;." `
+    --add-data "models;models" `
+    $entry
 
 Write-Host "Build finished. Check the dist\$name executable.";

@@ -1,6 +1,6 @@
 import os
 import requests
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -21,7 +21,7 @@ class FyersAdapter:
     def __init__(self, cfg: Dict[str, str]):
         self.api_key = cfg.get('api_key') or cfg.get('FYERS_API_KEY')
         self.access_token = cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN')
-        self.base = cfg.get('base', 'https://api.fyers.in')
+        self.base = cfg.get('base') or cfg.get('FYERS_BASE_URL', 'https://api-t1.fyers.in')
         self.instrument_map_endpoint = cfg.get('instrument_map_endpoint') or cfg.get('FYERS_INSTRUMENT_MAP_ENDPOINT')
         self.session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=(429, 500, 502, 503, 504))
@@ -30,7 +30,17 @@ class FyersAdapter:
     def _auth_header(self) -> Dict[str, str]:
         if not self.access_token:
             raise RuntimeError('FYERS access token not configured')
-        return {'Authorization': f'Bearer {self.access_token}'}
+        if not self.api_key:
+            raise RuntimeError('FYERS API key not configured')
+        return {'Authorization': f'{self.api_key}:{self.access_token}'}
+
+    @staticmethod
+    def _symbol(symbol: str) -> str:
+        if ':' in symbol:
+            return symbol
+        if symbol.endswith('-EQ'):
+            return f'NSE:{symbol}'
+        return f'NSE:{symbol}-EQ'
 
     def get_symbols(self) -> List[str]:
         """Fetch list of NSE symbols. If an instrument map endpoint is provided, call it; otherwise raise.
@@ -41,13 +51,18 @@ class FyersAdapter:
         url = self.instrument_map_endpoint
         r = self.session.get(url, headers=self._auth_header(), timeout=10)
         r.raise_for_status()
-        data = r.json()
-        # Assume data is a list of objects with 'symbol' key
+        payload = r.json()
+        data = payload.get('d', payload) if isinstance(payload, dict) else payload
+        if isinstance(data, dict):
+            data = data.get('data', data.get('symbols', []))
         symbols = []
         for itm in data:
-            sym = itm.get('symbol') or itm.get('tradingsymbol')
+            if isinstance(itm, str):
+                sym = itm
+            else:
+                sym = itm.get('symbol') or itm.get('tradingsymbol')
             if sym:
-                symbols.append(sym)
+                symbols.append(str(sym).replace('NSE:', '').replace('-EQ', ''))
         return symbols
 
     def get_latest(self, symbol: str) -> Dict[str, Any]:
@@ -56,41 +71,47 @@ class FyersAdapter:
         This method assumes a quote endpoint like /v2/quotations or similar.
         Adjust `path` as per actual API docs.
         """
-        path = f"{self.base}/v2/quotes/{symbol}"
-        r = self.session.get(path, headers=self._auth_header(), timeout=5)
-        if r.status_code == 404:
-            raise
+        path = f"{self.base}/data/quotes"
+        r = self.session.post(
+            path,
+            headers=self._auth_header(),
+            json={'symbols': self._symbol(symbol)},
+            timeout=5,
+        )
         r.raise_for_status()
-        j = r.json()
-        # Attempt common response shapes
-        ltp = None
-        if isinstance(j, dict):
-            ltp = j.get('ltp') or j.get('last_price') or j.get('lastTradedPrice')
+        payload = r.json()
+        data = payload.get('d', []) if isinstance(payload, dict) else []
+        quote = data[0].get('v', {}) if data else {}
+        ltp = quote.get('lp') or quote.get('last_price') or quote.get('lastTradedPrice')
         return {'symbol': symbol, 'ltp': float(ltp) if ltp is not None else None}
 
     def get_depth(self, symbol: str) -> Dict[str, Any]:
         """Fetch order-book / market depth for the symbol.
         Returns keys: bid_price, bid_qty, ask_price, ask_qty.
         """
-        path = f"{self.base}/v2/depth/{symbol}"
-        r = self.session.get(path, headers=self._auth_header(), timeout=5)
+        path = f"{self.base}/data/depth"
+        r = self.session.post(
+            path,
+            headers=self._auth_header(),
+            json={'symbol': self._symbol(symbol), 'ohlcv_flag': '1'},
+            timeout=5,
+        )
         r.raise_for_status()
-        j = r.json()
-        # parse common shapes
-        bid_price = None
-        bid_qty = None
-        ask_price = None
-        ask_qty = None
-        if isinstance(j, dict):
-            # try nested fields
-            bids = j.get('bids') or j.get('buy')
-            asks = j.get('asks') or j.get('sell')
-            if bids and len(bids) > 0:
-                bid_price = bids[0][0] if isinstance(bids[0], (list, tuple)) else bids[0].get('price')
-                bid_qty = bids[0][1] if isinstance(bids[0], (list, tuple)) else bids[0].get('quantity')
-            if asks and len(asks) > 0:
-                ask_price = asks[0][0] if isinstance(asks[0], (list, tuple)) else asks[0].get('price')
-                ask_qty = asks[0][1] if isinstance(asks[0], (list, tuple)) else asks[0].get('quantity')
+        payload = r.json()
+        data = payload.get('d', {}) if isinstance(payload, dict) else {}
+        bids = data.get('bids', []) if isinstance(data, dict) else []
+        asks = data.get('ask', data.get('asks', [])) if isinstance(data, dict) else []
+
+        def level(values):
+            if not values:
+                return None, None
+            first = values[0]
+            if isinstance(first, (list, tuple)):
+                return first[0], first[1]
+            return first.get('price'), first.get('volume', first.get('quantity'))
+
+        bid_price, bid_qty = level(bids)
+        ask_price, ask_qty = level(asks)
 
         return {'bid_price': bid_price, 'bid_qty': bid_qty, 'ask_price': ask_price, 'ask_qty': ask_qty}
 
@@ -100,25 +121,30 @@ class FyersAdapter:
         Returns a list of tuples (timestamp(datetime), price(float), qty(int)).
         The adapter will try to call a minute-history endpoint; if not available, raise NotImplementedError.
         """
-        # Example placeholder path — adapt to broker docs
-        path = f"{self.base}/v2/history/{symbol}?interval=1m&range={minutes}m"
-        r = self.session.get(path, headers=self._auth_header(), timeout=10)
+        now = int(time.time())
+        start = now - (int(minutes) * 60)
+        path = f"{self.base}/data/history"
+        params = {
+            'symbol': self._symbol(symbol),
+            'resolution': '1',
+            'date_format': '0',
+            'range_from': start,
+            'range_to': now,
+            'cont_flag': '1',
+        }
+        r = self.session.get(path, headers=self._auth_header(), params=params, timeout=10)
         r.raise_for_status()
-        j = r.json()
+        payload = r.json()
+        candles = payload.get('candles', []) if isinstance(payload, dict) else []
         out = []
-        # Expect j to be list of bars with time/close/volume
-        for bar in j:
-            t = bar.get('timestamp') or bar.get('time')
-            price = bar.get('close') or bar.get('price')
-            qty = bar.get('volume') or bar.get('quantity') or 0
-            # normalize timestamp to python datetime if numeric
+        for candle in candles:
+            if len(candle) < 6:
+                continue
+            t, _open, _high, _low, price, qty = candle[:6]
             try:
                 import datetime as _dt
-                if isinstance(t, (int, float)):
-                    dt = _dt.datetime.utcfromtimestamp(t)
-                else:
-                    dt = _dt.datetime.fromisoformat(t)
+                dt = _dt.datetime.fromtimestamp(float(t), tz=_dt.timezone.utc)
             except Exception:
-                dt = None
-            out.append((dt, float(price) if price is not None else None, int(qty)))
+                continue
+            out.append((dt, float(price), int(qty or 0)))
         return out

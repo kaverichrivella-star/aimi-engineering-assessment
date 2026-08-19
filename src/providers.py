@@ -137,7 +137,10 @@ class FyersProvider(BaseProvider):
     """Live Fyers provider wrapper with optional Yahoo fallback."""
     def __init__(self, cfg, symbols=None):
         self.symbols = symbols or []
-        self.use_live = bool(cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN'))
+        self.use_live = bool(
+            (cfg.get('api_key') or cfg.get('FYERS_API_KEY'))
+            and (cfg.get('access_token') or cfg.get('FYERS_ACCESS_TOKEN'))
+        )
         self.adapter = FyersAdapter(cfg) if self.use_live else None
         self.fallback = YFinanceProvider(self.symbols)
 

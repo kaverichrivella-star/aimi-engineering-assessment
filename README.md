@@ -99,6 +99,26 @@ trains a `RandomForestClassifier`, and saves `models/model.joblib`.
 
 The app can also retrain the model from the sidebar.
 
+## One-day capture and next-day validation
+
+The default `Fyers` provider is read-only. The application never calls an order-placement endpoint;
+all trades are paper trades. With a valid FYERS data token, run the app during one complete trading day.
+Each filtered one-minute snapshot is appended to `data/captures/capture_YYYY-MM-DD.csv`.
+
+On the following trading day:
+
+1. Select the previous day under `Training-day capture`.
+2. Click `Train from training-day capture`.
+3. Select the following day under `Following-day capture`.
+4. Click `Validate next-day signals`.
+
+The validation report compares all 20/120 SMMA crossover signals with accepted paper trades and avoided signals.
+It reports profitable and unsuccessful trades, success/failure percentages, overall paper P/L, confidence,
+and the reason each low-confidence signal was avoided.
+
+Without FYERS credentials, the app uses Yahoo Finance fallback data for development; this is not a substitute
+for a complete broker-session capture.
+
 ## Tests
 
 Run:
@@ -115,6 +135,8 @@ Create a Windows `.exe` with:
 .\build_exe.ps1
 ```
 
+The build packages `launcher.py`, the Streamlit app, symbols, and the trained model into `dist\stock_screener.exe`.
+
 ## Demo recording
 
 Use a screen recorder such as `ffmpeg`:
@@ -124,3 +146,6 @@ ffmpeg -f gdigrab -framerate 15 -offset_x 0 -offset_y 0 -video_size 1920x1080 -i
 ```
 
 > Keep API keys and `.env` contents private when recording or sharing demo videos.
+
+The repository includes the reproducible recording command, but a video file must be captured on the operator's
+desktop while the app is running; it cannot be generated meaningfully without an active display session.
